@@ -38,6 +38,7 @@ internal sealed class ResultWindow : ChromeWindow
     private readonly List<Border> _zoomCardButtons = [];
     private readonly List<AnnotationVisual> _annotations = [];
     private readonly Border _annotateButton;
+    private readonly AnnotationSelectionAdorner _selectionAdorner;
     private double _displayScale = 1;
     private double _zoom = 1;
     private double _offsetX;
@@ -48,6 +49,9 @@ internal sealed class ResultWindow : ChromeWindow
     private bool _panning;
     private bool _annotateMode;
     private bool _drawingAnnotation;
+    private bool _resizingAnnotation;
+    private ResizeHandle _activeResizeHandle;
+    private DrawingRectangleF _resizeStartBounds;
     private Windows.Foundation.Point _annotationStart;
     private AnnotationVisual? _selectedAnnotation;
     private Windows.Foundation.Point _lastPointer;
@@ -72,6 +76,7 @@ internal sealed class ResultWindow : ChromeWindow
 
         _imageContent.Children.Add(_preview);
         _imageContent.Children.Add(_annotationLayer);
+        _selectionAdorner = new AnnotationSelectionAdorner(_annotationLayer);
         _image.Child = _imageContent;
         _viewport.Children.Add(_dots);
         _viewport.Children.Add(_image);
@@ -193,8 +198,36 @@ internal sealed class ResultWindow : ChromeWindow
             return;
         }
 
-        if (!_annotateMode || !current.Properties.IsLeftButtonPressed ||
-            !TryViewportToImage(current.Position, out var imagePoint)) return;
+        if (!current.Properties.IsLeftButtonPressed) return;
+        var handle = _selectionAdorner.HitTest(ViewportToImageLayer(current.Position));
+        if (handle != ResizeHandle.None && _selectedAnnotation is not null)
+        {
+            BeginResize(handle);
+            _viewport.CapturePointer(e.Pointer);
+            _viewport.SetResizeCursor(handle);
+            e.Handled = true;
+            return;
+        }
+
+        if (!TryViewportToImage(current.Position, out var imagePoint))
+        {
+            if (!_annotateMode) SelectAnnotation(null);
+            return;
+        }
+
+        var hit = HitTestAnnotation(imagePoint);
+        if (hit is not null)
+        {
+            SelectAnnotation(hit);
+            e.Handled = true;
+            return;
+        }
+
+        if (!_annotateMode)
+        {
+            SelectAnnotation(null);
+            return;
+        }
 
         BeginAnnotation(imagePoint);
         _viewport.CapturePointer(e.Pointer);
@@ -204,11 +237,22 @@ internal sealed class ResultWindow : ChromeWindow
     private void PointerMoved(object sender, PointerRoutedEventArgs e)
     {
         _spaceHeld = IsSpaceDown;
+        var pointer = e.GetCurrentPoint(_viewport).Position;
+        if (_resizingAnnotation)
+        {
+            UpdateResize(ViewportToImageClamped(pointer));
+            e.Handled = true;
+            return;
+        }
         if (!_panning && !_drawingAnnotation)
-            _viewport.SetInteractionCursor(_spaceHeld, _annotateMode);
+        {
+            var handle = _selectionAdorner.HitTest(ViewportToImageLayer(pointer));
+            if (handle == ResizeHandle.None) _viewport.SetInteractionCursor(_spaceHeld, _annotateMode);
+            else _viewport.SetResizeCursor(handle);
+        }
         if (_drawingAnnotation)
         {
-            UpdateDrawingAnnotation(ViewportToImageClamped(e.GetCurrentPoint(_viewport).Position));
+            UpdateDrawingAnnotation(ViewportToImageClamped(pointer));
             e.Handled = true;
             return;
         }
@@ -223,6 +267,16 @@ internal sealed class ResultWindow : ChromeWindow
 
     private void PointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (_resizingAnnotation)
+        {
+            UpdateResize(ViewportToImageClamped(e.GetCurrentPoint(_viewport).Position));
+            _resizingAnnotation = false;
+            _activeResizeHandle = ResizeHandle.None;
+            _viewport.ReleasePointerCapture(e.Pointer);
+            _viewport.SetInteractionCursor(IsSpaceDown, _annotateMode);
+            e.Handled = true;
+            return;
+        }
         if (_drawingAnnotation)
         {
             UpdateDrawingAnnotation(ViewportToImageClamped(e.GetCurrentPoint(_viewport).Position));
@@ -254,6 +308,18 @@ internal sealed class ResultWindow : ChromeWindow
         {
             CancelDrawingAnnotation();
             e.Handled = true;
+            return;
+        }
+        if (e.Key == Windows.System.VirtualKey.Escape && _selectedAnnotation is not null)
+        {
+            SelectAnnotation(null);
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Windows.System.VirtualKey.Delete && _selectedAnnotation is not null)
+        {
+            RemoveAnnotation(_selectedAnnotation);
+            e.Handled = true;
         }
     }
 
@@ -262,6 +328,7 @@ internal sealed class ResultWindow : ChromeWindow
         if (e.Key != Windows.System.VirtualKey.Space) return;
         _spaceHeld = false;
         _panning = false;
+        _viewport.ReleasePointerCaptures();
         _viewport.SetInteractionCursor(false, _annotateMode);
         e.Handled = true;
     }
@@ -296,7 +363,8 @@ internal sealed class ResultWindow : ChromeWindow
         var visual = new AnnotationVisual(model, new XamlRectangle { Fill = null });
         _annotations.Add(visual);
         _annotationLayer.Children.Add(visual.Shape);
-        _selectedAnnotation = visual;
+        Canvas.SetZIndex(visual.Shape, _annotations.Count);
+        SelectAnnotation(visual, false);
         UpdateAnnotationVisual(visual);
     }
 
@@ -324,12 +392,7 @@ internal sealed class ResultWindow : ChromeWindow
             return;
         }
 
-        _annotationStyleBar.SetStyle(
-            _selectedAnnotation.Model.Color,
-            _selectedAnnotation.Model.StrokeWidth);
-        _annotationStyleBar.Visibility = Visibility.Visible;
-        PositionAnnotationStyleBar();
-        PositionZoomCard();
+        SelectAnnotation(_selectedAnnotation);
     }
 
     private void CancelDrawingAnnotation()
@@ -344,18 +407,54 @@ internal sealed class ResultWindow : ChromeWindow
     {
         _annotationLayer.Children.Remove(annotation.Shape);
         _annotations.Remove(annotation);
-        _selectedAnnotation = _annotations.LastOrDefault();
-        if (_selectedAnnotation is null)
+        SelectAnnotation(null);
+    }
+
+    private void SelectAnnotation(AnnotationVisual? annotation, bool showStyle = true)
+    {
+        _selectedAnnotation = annotation;
+        if (annotation is null)
         {
+            _selectionAdorner.Hide();
             _annotationStyleBar.Visibility = Visibility.Collapsed;
         }
         else
         {
-            _annotationStyleBar.SetStyle(
-                _selectedAnnotation.Model.Color,
-                _selectedAnnotation.Model.StrokeWidth);
+            _annotationStyleBar.SetStyle(annotation.Model.Color, annotation.Model.StrokeWidth);
+            _annotationStyleBar.Visibility = showStyle ? Visibility.Visible : Visibility.Collapsed;
+            if (showStyle) UpdateSelectionAdorner();
+            else _selectionAdorner.Hide();
         }
+        PositionAnnotationStyleBar();
         PositionZoomCard();
+    }
+
+    private AnnotationVisual? HitTestAnnotation(Windows.Foundation.Point point)
+    {
+        for (var index = _annotations.Count - 1; index >= 0; index--)
+        {
+            var bounds = _annotations[index].Model.Bounds;
+            if (bounds.Contains((float)point.X, (float)point.Y)) return _annotations[index];
+        }
+        return null;
+    }
+
+    private void BeginResize(ResizeHandle handle)
+    {
+        if (_selectedAnnotation is null) return;
+        _resizingAnnotation = true;
+        _activeResizeHandle = handle;
+        _resizeStartBounds = _selectedAnnotation.Model.Bounds;
+    }
+
+    private void UpdateResize(Windows.Foundation.Point point)
+    {
+        if (!_resizingAnnotation || _selectedAnnotation is null) return;
+        _selectedAnnotation.Model.Bounds = RectangleAnnotation.Resize(
+            _resizeStartBounds,
+            _activeResizeHandle,
+            new System.Drawing.PointF((float)point.X, (float)point.Y));
+        UpdateAnnotationVisual(_selectedAnnotation);
     }
 
     private bool TryViewportToImage(Windows.Foundation.Point point, out Windows.Foundation.Point imagePoint)
@@ -383,6 +482,9 @@ internal sealed class ResultWindow : ChromeWindow
             Math.Clamp((point.X - _offsetX) / width * _imageWidth, 0, _imageWidth),
             Math.Clamp((point.Y - _offsetY) / height * _imageHeight, 0, _imageHeight));
     }
+
+    private Windows.Foundation.Point ViewportToImageLayer(Windows.Foundation.Point point) =>
+        new(point.X - _offsetX, point.Y - _offsetY);
 
     private void ResetZoom()
     {
@@ -431,6 +533,7 @@ internal sealed class ResultWindow : ChromeWindow
         Canvas.SetLeft(_image, _offsetX);
         Canvas.SetTop(_image, _offsetY);
         foreach (var annotation in _annotations) UpdateAnnotationVisual(annotation);
+        UpdateSelectionAdorner();
     }
 
     private void UpdateAnnotationVisual(AnnotationVisual annotation)
@@ -447,6 +550,21 @@ internal sealed class ResultWindow : ChromeWindow
             annotation.Model.Color.B));
         Canvas.SetLeft(annotation.Shape, bounds.X * scale);
         Canvas.SetTop(annotation.Shape, bounds.Y * scale);
+        if (ReferenceEquals(annotation, _selectedAnnotation) && !_drawingAnnotation)
+            UpdateSelectionAdorner();
+    }
+
+    private void UpdateSelectionAdorner()
+    {
+        if (_selectedAnnotation is null || _drawingAnnotation)
+        {
+            _selectionAdorner.Hide();
+            return;
+        }
+        _selectionAdorner.Show(
+            _selectedAnnotation.Model.Bounds,
+            ImageDipWidth / _imageWidth,
+            _selectedAnnotation.Model.Color);
     }
 
     private void UpdateZoomText()
@@ -563,6 +681,7 @@ internal sealed class ResultWindow : ChromeWindow
         foreach (var button in _zoomCardButtons) button.Background = ThemePalette.Toolbar;
         ApplyTextColor(_zoomCard.Child);
         _annotationStyleBar.ApplyTheme();
+        UpdateSelectionAdorner();
         UpdateAnnotateButton();
         if (_lastViewportSize.Width > 0) RebuildDots(_lastViewportSize);
     }
@@ -619,5 +738,13 @@ internal sealed class ResultWindow : ChromeWindow
         public void SetPanCursor(bool dragging) => ProtectedCursor = InputSystemCursor.Create(dragging ? InputSystemCursorShape.SizeAll : InputSystemCursorShape.Hand);
         public void SetInteractionCursor(bool spaceHeld, bool annotateMode) => ProtectedCursor = InputSystemCursor.Create(
             spaceHeld ? InputSystemCursorShape.Hand : annotateMode ? InputSystemCursorShape.Cross : InputSystemCursorShape.Arrow);
+        public void SetResizeCursor(ResizeHandle handle) => ProtectedCursor = InputSystemCursor.Create(handle switch
+        {
+            ResizeHandle.Top or ResizeHandle.Bottom => InputSystemCursorShape.SizeNorthSouth,
+            ResizeHandle.Left or ResizeHandle.Right => InputSystemCursorShape.SizeWestEast,
+            ResizeHandle.TopLeft or ResizeHandle.BottomRight => InputSystemCursorShape.SizeNorthwestSoutheast,
+            ResizeHandle.TopRight or ResizeHandle.BottomLeft => InputSystemCursorShape.SizeNortheastSouthwest,
+            _ => InputSystemCursorShape.Arrow
+        });
     }
 }
