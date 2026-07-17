@@ -109,6 +109,14 @@ internal sealed class ResultWindow : ChromeWindow
         _viewport.PointerReleased += PointerReleased;
         _viewport.KeyDown += KeyDown;
         _viewport.KeyUp += KeyUp;
+        var deleteAccelerator = new KeyboardAccelerator { Key = Windows.System.VirtualKey.Delete };
+        deleteAccelerator.Invoked += (_, e) =>
+        {
+            if (_selectedAnnotation is null) return;
+            RemoveAnnotation(_selectedAnnotation);
+            e.Handled = true;
+        };
+        if (Content is UIElement root) root.KeyboardAccelerators.Add(deleteAccelerator);
         ApplyContentTheme();
     }
 
@@ -346,11 +354,6 @@ internal sealed class ResultWindow : ChromeWindow
             SelectAnnotation(null);
             e.Handled = true;
             return;
-        }
-        if (e.Key == Windows.System.VirtualKey.Delete && _selectedAnnotation is not null)
-        {
-            RemoveAnnotation(_selectedAnnotation);
-            e.Handled = true;
         }
     }
 
