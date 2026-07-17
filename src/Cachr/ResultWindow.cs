@@ -181,9 +181,16 @@ internal sealed class ResultWindow : ChromeWindow
         };
         if (!_positioned)
         {
+            var imageWidth = _imageWidth / _displayScale;
+            var imageHeight = _imageHeight / _displayScale;
+            var fitZoom = Math.Min(
+                Math.Max(1, e.NewSize.Width - 64) / imageWidth,
+                Math.Max(1, e.NewSize.Height - 64) / imageHeight);
+            _zoom = Math.Clamp(Math.Min(1, fitZoom), .1, 1);
             _offsetX = (e.NewSize.Width - ImageDipWidth) / 2;
             _offsetY = (e.NewSize.Height - ImageDipHeight) / 2;
             _positioned = true;
+            UpdateZoomText();
         }
         else
         {
