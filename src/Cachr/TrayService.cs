@@ -88,7 +88,8 @@ internal sealed class TrayService : IDisposable
     {
         Size = Marshal.SizeOf<Win32.NotifyIconData>(), Hwnd = _hwnd, Id = 1,
         Flags = NifMessage | NifIcon | NifTip, CallbackMessage = Win32.WmTrayIcon,
-        Icon = _icon != IntPtr.Zero ? _icon : Win32.LoadIcon(IntPtr.Zero, new IntPtr(32512)), Tip = $"Cachr — {AppSettings.Hotkey.DisplayText}",
+        Icon = _icon != IntPtr.Zero ? _icon : Win32.LoadIcon(IntPtr.Zero, new IntPtr(32512)),
+        Tip = $"Cachr — Region: {AppSettings.Hotkey.DisplayText} • Screen: {HotkeyBinding.FullScreen.DisplayText}",
         Info = string.Empty, InfoTitle = string.Empty
     };
 

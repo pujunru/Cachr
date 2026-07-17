@@ -51,6 +51,16 @@ internal sealed class SettingsWindow : ChromeWindow
         _shortcutButton.KeyDown += ShortcutKeyDown;
         content.Children.Add(SettingRow("Global shortcut", "Click, then press a new key combination.", _shortcutButton));
         content.Children.Add(_shortcutStatus);
+        content.Children.Add(SettingRow(
+            "Full screen",
+            "Capture the display under the pointer without selecting a region.",
+            new TextBlock
+            {
+                Text = HotkeyBinding.FullScreen.DisplayText,
+                FontSize = UiTokens.Text,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            }));
 
         content.Children.Add(SectionTitle("General"));
         var startup = new ToggleSwitch { IsOn = StartupService.IsEnabled, VerticalAlignment = VerticalAlignment.Center };

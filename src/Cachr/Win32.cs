@@ -32,6 +32,8 @@ internal static class Win32
     [DllImport("user32.dll")] internal static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] internal static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] internal static extern IntPtr MonitorFromPoint(Point point, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] internal static extern IntPtr LoadCursor(IntPtr instance, IntPtr cursorName);
     [DllImport("user32.dll")] internal static extern IntPtr SetCursor(IntPtr cursor);
     [DllImport("user32.dll")] internal static extern int GetMessage(out WindowMessage message, IntPtr hwnd, uint minFilter, uint maxFilter);
@@ -75,6 +77,18 @@ internal static class Win32
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct Point { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Rect { public int Left; public int Top; public int Right; public int Bottom; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct MonitorInfo
+    {
+        public int Size;
+        public Rect Monitor;
+        public Rect WorkArea;
+        public uint Flags;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct WindowMessage

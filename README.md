@@ -14,7 +14,7 @@ dotnet restore Cachr.sln
 & .\src\Cachr\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\Cachr.exe
 ```
 
-Run Cachr from the system tray, press the configured global shortcut (default: `Ctrl+Alt+Shift+4`), and drag a region. The result opens in a compact canvas window where it can be copied or saved as PNG. `Escape` cancels capture.
+Run Cachr from the system tray. Press the configurable region shortcut (default: `Ctrl+Alt+Shift+4`) and drag a region, or press `Alt+Shift+4` to capture the display under the pointer immediately. The result opens in a compact canvas window where it can be annotated, copied, or saved as PNG. `Escape` cancels region capture.
 
 The shortcut, theme, and startup behavior can be changed from **Tray → Settings**.
 
