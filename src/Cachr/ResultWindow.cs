@@ -39,6 +39,10 @@ internal sealed class ResultWindow : ChromeWindow
     private readonly List<AnnotationVisual> _annotations = [];
     private readonly Border _annotateButton;
     private readonly AnnotationSelectionAdorner _selectionAdorner;
+    private readonly Win32.WindowProc _windowProc;
+    private IntPtr _hwnd;
+    private IntPtr _previousWindowProc;
+    private bool _windowProcInstalled;
     private double _displayScale = 1;
     private double _zoom = 1;
     private double _offsetX;
@@ -61,6 +65,7 @@ internal sealed class ResultWindow : ChromeWindow
 
     public ResultWindow(DrawingBitmap image) : base("Cachr")
     {
+        _windowProc = WindowProc;
         using var stream = new MemoryStream();
         image.Save(stream, ImageFormat.Png);
         _png = stream.ToArray();
@@ -110,21 +115,16 @@ internal sealed class ResultWindow : ChromeWindow
         _viewport.PointerReleased += PointerReleased;
         _viewport.KeyDown += KeyDown;
         _viewport.KeyUp += KeyUp;
-        var deleteAccelerator = new KeyboardAccelerator { Key = Windows.System.VirtualKey.Delete };
-        deleteAccelerator.Invoked += (_, e) =>
-        {
-            if (_selectedAnnotation is null) return;
-            DeleteSelectedAnnotation();
-            e.Handled = true;
-        };
-        if (Content is UIElement root) root.KeyboardAccelerators.Add(deleteAccelerator);
+        Closed += (_, _) => RestoreWindowProc();
         ApplyContentTheme();
     }
 
     public async Task ShowAsync()
     {
         Activate();
-        _displayScale = Win32.GetDpiForWindow(WindowNative.GetWindowHandle(this)) / 96d;
+        _hwnd = WindowNative.GetWindowHandle(this);
+        InstallWindowProc();
+        _displayScale = Win32.GetDpiForWindow(_hwnd) / 96d;
         var imageDipWidth = _imageWidth / _displayScale;
         var imageDipHeight = _imageHeight / _displayScale;
         var width = (int)Math.Clamp(imageDipWidth + 32, 560, 1120);
@@ -448,6 +448,30 @@ internal sealed class ResultWindow : ChromeWindow
     private void DeleteSelectedAnnotation()
     {
         if (_selectedAnnotation is not null) RemoveAnnotation(_selectedAnnotation);
+    }
+
+    private void InstallWindowProc()
+    {
+        if (_windowProcInstalled) return;
+        _previousWindowProc = Win32.SetWindowLongPtr(_hwnd, Win32.GwlWndProc, _windowProc);
+        _windowProcInstalled = _previousWindowProc != IntPtr.Zero;
+    }
+
+    private void RestoreWindowProc()
+    {
+        if (!_windowProcInstalled) return;
+        Win32.SetWindowLongPtr(_hwnd, Win32.GwlWndProc, _previousWindowProc);
+        _windowProcInstalled = false;
+    }
+
+    private IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
+    {
+        if (message == Win32.WmKeyDown && wParam.ToInt32() == Win32.VkDelete && _selectedAnnotation is not null)
+        {
+            DeleteSelectedAnnotation();
+            return IntPtr.Zero;
+        }
+        return Win32.CallWindowProc(_previousWindowProc, hwnd, message, wParam, lParam);
     }
 
     private void SelectAnnotation(AnnotationVisual? annotation, bool showStyle = true)
