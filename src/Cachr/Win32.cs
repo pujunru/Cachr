@@ -7,7 +7,6 @@ namespace Cachr;
 internal static class Win32
 {
     internal const int WmHotkey = 0x0312;
-    internal const int WmKeyDown = 0x0100;
     internal const int WmQuit = 0x0012;
     internal const int WmTrayIcon = 0x8001;
     internal const int GwlWndProc = -4;
