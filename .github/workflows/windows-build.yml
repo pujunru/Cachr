@@ -29,19 +29,15 @@ jobs:
 
       - uses: microsoft/setup-msbuild@v2
 
-      - name: Restore
-        run: msbuild Cachr.sln /restore /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64
-
       - name: Build self-contained Windows app
         run: >-
-          msbuild Cachr.sln /t:Build
+          msbuild Cachr.sln /restore /t:Build
           /p:Configuration=Release
           /p:Platform=x64
           /p:RuntimeIdentifier=win-x64
           /p:SelfContained=true
           /p:WindowsAppSDKSelfContained=true
           /p:BaseOutputPath="${{ env.OUTPUT_ROOT }}\"
-          /p:RestorePackages=false
 
       - name: Create portable archive
         shell: pwsh
