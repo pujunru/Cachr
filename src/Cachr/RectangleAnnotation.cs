@@ -29,6 +29,17 @@ internal sealed class RectangleAnnotation
         return RectangleF.FromLTRB(left, top, right, bottom);
     }
 
+    internal static RectangleF Move(RectangleF original, PointF delta, SizeF imageSize)
+    {
+        var maxX = Math.Max(0, imageSize.Width - original.Width);
+        var maxY = Math.Max(0, imageSize.Height - original.Height);
+        return new RectangleF(
+            Math.Clamp(original.X + delta.X, 0, maxX),
+            Math.Clamp(original.Y + delta.Y, 0, maxY),
+            original.Width,
+            original.Height);
+    }
+
     internal void Render(Graphics graphics)
     {
         if (Bounds.Width <= 0 || Bounds.Height <= 0) return;
