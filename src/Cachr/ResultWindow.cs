@@ -50,8 +50,11 @@ internal sealed class ResultWindow : ChromeWindow
     private bool _annotateMode;
     private bool _drawingAnnotation;
     private bool _resizingAnnotation;
+    private bool _movingAnnotation;
     private ResizeHandle _activeResizeHandle;
     private DrawingRectangleF _resizeStartBounds;
+    private DrawingRectangleF _moveStartBounds;
+    private Windows.Foundation.Point _moveStartPoint;
     private Windows.Foundation.Point _annotationStart;
     private AnnotationVisual? _selectedAnnotation;
     private Windows.Foundation.Point _lastPointer;
@@ -219,6 +222,9 @@ internal sealed class ResultWindow : ChromeWindow
         if (hit is not null)
         {
             SelectAnnotation(hit);
+            BeginMove(hit, imagePoint);
+            _viewport.CapturePointer(e.Pointer);
+            _viewport.SetObjectMoveCursor(true);
             e.Handled = true;
             return;
         }
@@ -244,11 +250,27 @@ internal sealed class ResultWindow : ChromeWindow
             e.Handled = true;
             return;
         }
+        if (_movingAnnotation)
+        {
+            UpdateMove(ViewportToImageClamped(pointer));
+            e.Handled = true;
+            return;
+        }
         if (!_panning && !_drawingAnnotation)
         {
             var handle = _selectionAdorner.HitTest(ViewportToImageLayer(pointer));
-            if (handle == ResizeHandle.None) _viewport.SetInteractionCursor(_spaceHeld, _annotateMode);
-            else _viewport.SetResizeCursor(handle);
+            if (handle != ResizeHandle.None)
+            {
+                _viewport.SetResizeCursor(handle);
+            }
+            else if (TryViewportToImage(pointer, out var imagePoint) && HitTestAnnotation(imagePoint) is not null)
+            {
+                _viewport.SetObjectMoveCursor(false);
+            }
+            else
+            {
+                _viewport.SetInteractionCursor(_spaceHeld, _annotateMode);
+            }
         }
         if (_drawingAnnotation)
         {
@@ -274,6 +296,15 @@ internal sealed class ResultWindow : ChromeWindow
             _activeResizeHandle = ResizeHandle.None;
             _viewport.ReleasePointerCapture(e.Pointer);
             _viewport.SetInteractionCursor(IsSpaceDown, _annotateMode);
+            e.Handled = true;
+            return;
+        }
+        if (_movingAnnotation)
+        {
+            UpdateMove(ViewportToImageClamped(e.GetCurrentPoint(_viewport).Position));
+            _movingAnnotation = false;
+            _viewport.ReleasePointerCapture(e.Pointer);
+            _viewport.SetObjectMoveCursor(false);
             e.Handled = true;
             return;
         }
@@ -445,6 +476,25 @@ internal sealed class ResultWindow : ChromeWindow
         _resizingAnnotation = true;
         _activeResizeHandle = handle;
         _resizeStartBounds = _selectedAnnotation.Model.Bounds;
+    }
+
+    private void BeginMove(AnnotationVisual annotation, Windows.Foundation.Point point)
+    {
+        _movingAnnotation = true;
+        _moveStartBounds = annotation.Model.Bounds;
+        _moveStartPoint = point;
+    }
+
+    private void UpdateMove(Windows.Foundation.Point point)
+    {
+        if (!_movingAnnotation || _selectedAnnotation is null) return;
+        _selectedAnnotation.Model.Bounds = RectangleAnnotation.Move(
+            _moveStartBounds,
+            new System.Drawing.PointF(
+                (float)(point.X - _moveStartPoint.X),
+                (float)(point.Y - _moveStartPoint.Y)),
+            new System.Drawing.SizeF(_imageWidth, _imageHeight));
+        UpdateAnnotationVisual(_selectedAnnotation);
     }
 
     private void UpdateResize(Windows.Foundation.Point point)
@@ -746,5 +796,7 @@ internal sealed class ResultWindow : ChromeWindow
             ResizeHandle.TopRight or ResizeHandle.BottomLeft => InputSystemCursorShape.SizeNortheastSouthwest,
             _ => InputSystemCursorShape.Arrow
         });
+        public void SetObjectMoveCursor(bool dragging) => ProtectedCursor = InputSystemCursor.Create(
+            dragging ? InputSystemCursorShape.SizeAll : InputSystemCursorShape.Hand);
     }
 }
