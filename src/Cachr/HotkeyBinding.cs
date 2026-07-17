@@ -5,7 +5,7 @@ namespace Cachr;
 internal sealed record HotkeyBinding(uint Modifiers, uint Key)
 {
     internal static HotkeyBinding Default { get; } = new(Win32.ModControl | Win32.ModAlt | Win32.ModShift, (uint)VirtualKey.Number4);
-    internal static HotkeyBinding FullScreen { get; } = new(Win32.ModAlt | Win32.ModShift, (uint)VirtualKey.Number4);
+    internal static HotkeyBinding FullScreenDefault { get; } = new(Win32.ModAlt | Win32.ModShift, (uint)VirtualKey.Number4);
 
     internal string DisplayText
     {

@@ -18,16 +18,10 @@ internal sealed class SettingsWindow : ChromeWindow
     };
     private readonly Border _light = new() { Height = 62, CornerRadius = new CornerRadius(UiTokens.Radius) };
     private readonly Border _dark = new() { Height = 62, CornerRadius = new CornerRadius(UiTokens.Radius) };
-    private readonly Button _shortcutButton = new()
-    {
-        Height = UiTokens.ControlHeight,
-        MinWidth = 112,
-        Padding = new Thickness(10, 0, 10, 0),
-        CornerRadius = new CornerRadius(UiTokens.Radius),
-        FontSize = UiTokens.Text
-    };
+    private readonly Button _regionShortcutButton = ShortcutButton();
+    private readonly Button _fullScreenShortcutButton = ShortcutButton();
     private readonly TextBlock _shortcutStatus = new() { FontSize = UiTokens.SmallText, Opacity = .7, Visibility = Visibility.Collapsed };
-    private bool _recording;
+    private CaptureHotkey? _recording;
 
     public SettingsWindow() : base("Settings")
     {
@@ -46,21 +40,11 @@ internal sealed class SettingsWindow : ChromeWindow
         content.Children.Add(themes);
 
         content.Children.Add(SectionTitle("Capture shortcut"));
-        _shortcutButton.Content = AppSettings.Hotkey.DisplayText;
-        _shortcutButton.Click += (_, _) => BeginShortcutCapture();
-        _shortcutButton.KeyDown += ShortcutKeyDown;
-        content.Children.Add(SettingRow("Global shortcut", "Click, then press a new key combination.", _shortcutButton));
+        ConfigureShortcutButton(_regionShortcutButton, CaptureHotkey.Region);
+        ConfigureShortcutButton(_fullScreenShortcutButton, CaptureHotkey.FullScreen);
+        content.Children.Add(SettingRow("Region", "Select an area to capture.", _regionShortcutButton));
+        content.Children.Add(SettingRow("Full screen", "Capture the display under the pointer.", _fullScreenShortcutButton));
         content.Children.Add(_shortcutStatus);
-        content.Children.Add(SettingRow(
-            "Full screen",
-            "Capture the display under the pointer without selecting a region.",
-            new TextBlock
-            {
-                Text = HotkeyBinding.FullScreen.DisplayText,
-                FontSize = UiTokens.Text,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                VerticalAlignment = VerticalAlignment.Center
-            }));
 
         content.Children.Add(SectionTitle("General"));
         var startup = new ToggleSwitch { IsOn = StartupService.IsEnabled, VerticalAlignment = VerticalAlignment.Center };
@@ -77,7 +61,7 @@ internal sealed class SettingsWindow : ChromeWindow
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
         Body.Children.Add(scroll);
-        Closed += (_, _) => { if (_recording) HotkeyService.CancelCapture(); };
+        Closed += (_, _) => { if (_recording is not null) HotkeyService.CancelCapture(); };
         ApplyContentTheme();
     }
 
@@ -113,42 +97,67 @@ internal sealed class SettingsWindow : ChromeWindow
         tile.PointerPressed += (_, e) => { e.Handled = true; AppSettings.Theme = theme; };
     }
 
-    private void BeginShortcutCapture()
+    private static Button ShortcutButton() => new()
     {
-        if (_recording) return;
-        _recording = true;
+        Height = UiTokens.ControlHeight,
+        MinWidth = 112,
+        Padding = new Thickness(10, 0, 10, 0),
+        CornerRadius = new CornerRadius(UiTokens.Radius),
+        FontSize = UiTokens.Text
+    };
+
+    private void ConfigureShortcutButton(Button button, CaptureHotkey target)
+    {
+        button.Content = BindingFor(target).DisplayText;
+        button.Click += (_, _) => BeginShortcutCapture(target, button);
+        button.KeyDown += ShortcutKeyDown;
+    }
+
+    private static HotkeyBinding BindingFor(CaptureHotkey target) =>
+        target == CaptureHotkey.Region ? AppSettings.Hotkey : AppSettings.FullScreenHotkey;
+
+    private void BeginShortcutCapture(CaptureHotkey target, Button button)
+    {
+        if (_recording is not null) return;
+        _recording = target;
         HotkeyService.BeginCapture();
-        _shortcutButton.Content = "Press shortcut…";
+        button.Content = "Press shortcut…";
         _shortcutStatus.Text = "Use at least one modifier. Esc cancels.";
         _shortcutStatus.Visibility = Visibility.Visible;
-        _shortcutButton.Focus(FocusState.Programmatic);
+        button.Focus(FocusState.Programmatic);
     }
 
     private void ShortcutKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (!_recording) return;
+        if (_recording is not CaptureHotkey target) return;
         e.Handled = true;
         if (e.Key == VirtualKey.Escape)
         {
-            _recording = false;
+            _recording = null;
             HotkeyService.CancelCapture();
-            _shortcutButton.Content = AppSettings.Hotkey.DisplayText;
+            RefreshShortcutButtons();
             _shortcutStatus.Visibility = Visibility.Collapsed;
             return;
         }
         if (!HotkeyBinding.TryFromKey(e.Key, out var binding)) return;
-        if (HotkeyService.TryChange(binding!, out var error))
+        if (HotkeyService.TryChange(target, binding!, out var error))
         {
-            _recording = false;
-            _shortcutButton.Content = binding!.DisplayText;
+            _recording = null;
+            RefreshShortcutButtons();
             _shortcutStatus.Text = "Shortcut updated.";
         }
         else
         {
-            _recording = false;
-            _shortcutButton.Content = AppSettings.Hotkey.DisplayText;
+            _recording = null;
+            RefreshShortcutButtons();
             _shortcutStatus.Text = error ?? "Shortcut unavailable.";
         }
+    }
+
+    private void RefreshShortcutButtons()
+    {
+        _regionShortcutButton.Content = AppSettings.Hotkey.DisplayText;
+        _fullScreenShortcutButton.Content = AppSettings.FullScreenHotkey.DisplayText;
     }
 
     protected override void ApplyContentTheme()

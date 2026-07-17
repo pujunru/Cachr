@@ -2,6 +2,8 @@ using Microsoft.UI.Dispatching;
 
 namespace Cachr;
 
+internal enum CaptureHotkey { Region, FullScreen }
+
 internal static class HotkeyService
 {
     private static DispatcherQueue? _dispatcher;
@@ -15,7 +17,7 @@ internal static class HotkeyService
         _dispatcher = dispatcher;
         _regionAction = regionAction;
         _fullScreenAction = fullScreenAction;
-        CreateHotkeys(AppSettings.Hotkey);
+        CreateHotkeys(AppSettings.Hotkey, AppSettings.FullScreenHotkey);
     }
 
     internal static void BeginCapture() => DisposeHotkeys();
@@ -23,16 +25,18 @@ internal static class HotkeyService
     internal static void CancelCapture()
     {
         if (_regionHotkey is not null || _dispatcher is null) return;
-        try { CreateHotkeys(AppSettings.Hotkey); }
+        try { CreateHotkeys(AppSettings.Hotkey, AppSettings.FullScreenHotkey); }
         catch { DisposeHotkeys(); }
     }
 
-    internal static bool TryChange(HotkeyBinding binding, out string? error)
+    internal static bool TryChange(CaptureHotkey target, HotkeyBinding binding, out string? error)
     {
         error = null;
-        if (binding == HotkeyBinding.FullScreen)
+        var regionBinding = target == CaptureHotkey.Region ? binding : AppSettings.Hotkey;
+        var fullScreenBinding = target == CaptureHotkey.FullScreen ? binding : AppSettings.FullScreenHotkey;
+        if (regionBinding == fullScreenBinding)
         {
-            error = $"{binding.DisplayText} is reserved for full-screen capture.";
+            error = $"{binding.DisplayText} is already used by the other capture mode.";
             CancelCapture();
             return false;
         }
@@ -40,27 +44,28 @@ internal static class HotkeyService
         try
         {
             DisposeHotkeys();
-            CreateHotkeys(binding);
-            AppSettings.Hotkey = binding;
+            CreateHotkeys(regionBinding, fullScreenBinding);
+            if (target == CaptureHotkey.Region) AppSettings.Hotkey = binding;
+            else AppSettings.FullScreenHotkey = binding;
             return true;
         }
         catch (Exception ex)
         {
             error = ex.Message;
             DisposeHotkeys();
-            try { CreateHotkeys(AppSettings.Hotkey); } catch { DisposeHotkeys(); }
+            try { CreateHotkeys(AppSettings.Hotkey, AppSettings.FullScreenHotkey); } catch { DisposeHotkeys(); }
             return false;
         }
     }
 
     internal static void Stop() => DisposeHotkeys();
 
-    private static void CreateHotkeys(HotkeyBinding regionBinding)
+    private static void CreateHotkeys(HotkeyBinding regionBinding, HotkeyBinding fullScreenBinding)
     {
         _regionHotkey = new GlobalHotkey(_dispatcher!, _regionAction!, regionBinding);
         try
         {
-            _fullScreenHotkey = new GlobalHotkey(_dispatcher!, _fullScreenAction!, HotkeyBinding.FullScreen);
+            _fullScreenHotkey = new GlobalHotkey(_dispatcher!, _fullScreenAction!, fullScreenBinding);
         }
         catch
         {

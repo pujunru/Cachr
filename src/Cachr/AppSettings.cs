@@ -36,6 +36,18 @@ internal static class AppSettings
         }
     }
 
+    internal static HotkeyBinding FullScreenHotkey
+    {
+        get => _data.FullScreenHotkey ?? HotkeyBinding.FullScreenDefault;
+        set
+        {
+            if (FullScreenHotkey == value) return;
+            _data = _data with { FullScreenHotkey = value };
+            Save();
+            Changed?.Invoke();
+        }
+    }
+
     private static void Save()
     {
         Directory.CreateDirectory(Folder);
@@ -53,8 +65,8 @@ internal static class AppSettings
             }
         }
         catch { }
-        return new SettingsData(AppTheme.Light, HotkeyBinding.Default);
+        return new SettingsData(AppTheme.Light, HotkeyBinding.Default, HotkeyBinding.FullScreenDefault);
     }
 
-    private sealed record SettingsData(AppTheme Theme, HotkeyBinding Hotkey);
+    private sealed record SettingsData(AppTheme Theme, HotkeyBinding Hotkey, HotkeyBinding? FullScreenHotkey = null);
 }
