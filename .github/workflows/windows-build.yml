@@ -1,0 +1,71 @@
+name: Windows build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build
+    runs-on: windows-latest
+    env:
+      CACHR_VERSION: 0.1.${{ github.run_number }}
+      OUTPUT_ROOT: ${{ github.workspace }}\artifacts\portable
+      PUBLISH_DIR: ${{ github.workspace }}\artifacts\portable\x64\Release\net8.0-windows10.0.19041.0\win-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.423
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Restore
+        run: msbuild Cachr.sln /restore /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64
+
+      - name: Build self-contained Windows app
+        run: >-
+          msbuild Cachr.sln /t:Build
+          /p:Configuration=Release
+          /p:Platform=x64
+          /p:RuntimeIdentifier=win-x64
+          /p:SelfContained=true
+          /p:WindowsAppSDKSelfContained=true
+          /p:BaseOutputPath="${{ env.OUTPUT_ROOT }}\"
+          /p:RestorePackages=false
+
+      - name: Create portable archive
+        shell: pwsh
+        run: Compress-Archive -Path "${{ env.PUBLISH_DIR }}\*" -DestinationPath "artifacts\Cachr-portable-win-x64.zip" -Force
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        env:
+          CACHR_PUBLISH_DIR: ${{ env.PUBLISH_DIR }}
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\Cachr.iss"'
+
+      - name: Upload portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cachr-portable-win-x64
+          path: artifacts/Cachr-portable-win-x64.zip
+          if-no-files-found: error
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cachr-installer-win-x64
+          path: artifacts/installer/Cachr-Setup-win-x64.exe
+          if-no-files-found: error
