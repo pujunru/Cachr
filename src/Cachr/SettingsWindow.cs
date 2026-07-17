@@ -20,6 +20,7 @@ internal sealed class SettingsWindow : ChromeWindow
     private readonly Border _dark = new() { Height = 62, CornerRadius = new CornerRadius(UiTokens.Radius) };
     private readonly Button _regionShortcutButton = ShortcutButton();
     private readonly Button _fullScreenShortcutButton = ShortcutButton();
+    private readonly Button _windowShortcutButton = ShortcutButton();
     private readonly TextBlock _shortcutStatus = new() { FontSize = UiTokens.SmallText, Opacity = .7, Visibility = Visibility.Collapsed };
     private CaptureHotkey? _recording;
 
@@ -42,8 +43,10 @@ internal sealed class SettingsWindow : ChromeWindow
         content.Children.Add(SectionTitle("Capture shortcut"));
         ConfigureShortcutButton(_regionShortcutButton, CaptureHotkey.Region);
         ConfigureShortcutButton(_fullScreenShortcutButton, CaptureHotkey.FullScreen);
+        ConfigureShortcutButton(_windowShortcutButton, CaptureHotkey.Window);
         content.Children.Add(SettingRow("Region", "Select an area to capture.", _regionShortcutButton));
         content.Children.Add(SettingRow("Full screen", "Capture the display under the pointer.", _fullScreenShortcutButton));
+        content.Children.Add(SettingRow("Window", "Capture the active window.", _windowShortcutButton));
         content.Children.Add(_shortcutStatus);
 
         content.Children.Add(SectionTitle("General"));
@@ -113,8 +116,12 @@ internal sealed class SettingsWindow : ChromeWindow
         button.KeyDown += ShortcutKeyDown;
     }
 
-    private static HotkeyBinding BindingFor(CaptureHotkey target) =>
-        target == CaptureHotkey.Region ? AppSettings.Hotkey : AppSettings.FullScreenHotkey;
+    private static HotkeyBinding BindingFor(CaptureHotkey target) => target switch
+    {
+        CaptureHotkey.Region => AppSettings.Hotkey,
+        CaptureHotkey.FullScreen => AppSettings.FullScreenHotkey,
+        _ => AppSettings.WindowHotkey
+    };
 
     private void BeginShortcutCapture(CaptureHotkey target, Button button)
     {
@@ -158,6 +165,7 @@ internal sealed class SettingsWindow : ChromeWindow
     {
         _regionShortcutButton.Content = AppSettings.Hotkey.DisplayText;
         _fullScreenShortcutButton.Content = AppSettings.FullScreenHotkey.DisplayText;
+        _windowShortcutButton.Content = AppSettings.WindowHotkey.DisplayText;
     }
 
     protected override void ApplyContentTheme()

@@ -2,7 +2,7 @@
 
 A small, free and open-source Windows screenshot utility inspired by the focused capture flow of Shottr.
 
-The first release is intentionally limited to region capture, copying the result to the clipboard, and saving it as a PNG file. It is a native C#/.NET 8 WinUI 3 desktop application.
+Cachr focuses on region, display, and active-window capture, with a compact result canvas for annotation, clipboard copy, and PNG saving. It is a native C#/.NET 8 WinUI 3 desktop application.
 
 ## Run
 
@@ -14,7 +14,7 @@ dotnet restore Cachr.sln
 & .\src\Cachr\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\Cachr.exe
 ```
 
-Run Cachr from the system tray. Press the region shortcut (default: `Ctrl+Alt+Shift+4`) and drag a region, or press the full-screen shortcut (default: `Alt+Shift+4`) to capture the display under the pointer immediately. Both shortcuts are configurable in Settings. The result opens in a compact canvas window where it can be annotated, copied, or saved as PNG. `Escape` cancels region capture.
+Run Cachr from the system tray. Press the region shortcut (default: `Ctrl+Alt+Shift+4`) and drag a region, press `Alt+Shift+4` to capture the display under the pointer, or press `Alt+Shift+3` to capture the active window. All shortcuts are configurable in Settings. The result opens in a compact canvas window where it can be annotated, copied, or saved as PNG. `Escape` cancels region capture.
 
 The shortcut, theme, and startup behavior can be changed from **Tray → Settings**.
 

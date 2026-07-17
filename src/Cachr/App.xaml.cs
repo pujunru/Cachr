@@ -21,7 +21,7 @@ public sealed partial class App : Application
         AppSettings.Changed += SettingsChanged;
         try
         {
-            HotkeyService.Start(_uiDispatcher, StartCapture, CaptureCurrentScreen);
+            HotkeyService.Start(_uiDispatcher, StartCapture, CaptureCurrentScreen, CaptureCurrentWindow);
         }
         catch (Exception ex)
         {
@@ -36,11 +36,15 @@ public sealed partial class App : Application
         await overlay.ShowAsync();
     }
 
-    private void CaptureCurrentScreen()
+    private void CaptureCurrentScreen() => CaptureDirect(ScreenCapture.CurrentMonitorBounds);
+
+    private void CaptureCurrentWindow() => CaptureDirect(ScreenCapture.ForegroundWindowBounds);
+
+    private void CaptureDirect(Func<System.Drawing.Rectangle> bounds)
     {
         try
         {
-            using var image = ScreenCapture.Take(ScreenCapture.CurrentMonitorBounds());
+            using var image = ScreenCapture.Take(bounds());
             var result = new ResultWindow(image);
             _ = result.ShowAsync();
         }
