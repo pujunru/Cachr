@@ -14,6 +14,7 @@ internal static class Win32
     internal const uint ModAlt = 0x0001, ModControl = 0x0002, ModShift = 0x0004, ModWin = 0x0008, ModNoRepeat = 0x4000;
     internal const uint SwpNoActivate = 0x0010, SwpShowWindow = 0x0040;
     internal const int WsExLayered = 0x00080000;
+    internal const int VkBack = 0x0008;
     internal const int VkDelete = 0x002E;
     internal const uint LwaColorKey = 0x00000001;
     internal static readonly IntPtr HwndTopmost = new(-1);

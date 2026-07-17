@@ -20,7 +20,8 @@ namespace Cachr;
 
 internal sealed class ResultWindow : ChromeWindow
 {
-    private const int DeleteHotkeyId = 0xCA41;
+    private const int BackspaceHotkeyId = 0xCA41;
+    private const int DeleteHotkeyId = 0xCA42;
     private readonly byte[] _png;
     private readonly int _imageWidth;
     private readonly int _imageHeight;
@@ -44,6 +45,7 @@ internal sealed class ResultWindow : ChromeWindow
     private IntPtr _hwnd;
     private IntPtr _previousWindowProc;
     private bool _windowProcInstalled;
+    private bool _backspaceHotkeyRegistered;
     private bool _deleteHotkeyRegistered;
     private double _displayScale = 1;
     private double _zoom = 1;
@@ -119,8 +121,8 @@ internal sealed class ResultWindow : ChromeWindow
         _viewport.KeyUp += KeyUp;
         Activated += (_, e) =>
         {
-            if (e.WindowActivationState == WindowActivationState.Deactivated) UnregisterDeleteHotkey();
-            else RegisterDeleteHotkey();
+            if (e.WindowActivationState == WindowActivationState.Deactivated) UnregisterDeletionHotkeys();
+            else RegisterDeletionHotkeys();
         };
         Closed += (_, _) => RestoreWindowProc();
         ApplyContentTheme();
@@ -131,7 +133,7 @@ internal sealed class ResultWindow : ChromeWindow
         _hwnd = WindowNative.GetWindowHandle(this);
         InstallWindowProc();
         Activate();
-        RegisterDeleteHotkey();
+        RegisterDeletionHotkeys();
         _displayScale = Win32.GetDpiForWindow(_hwnd) / 96d;
         var imageDipWidth = _imageWidth / _displayScale;
         var imageDipHeight = _imageHeight / _displayScale;
@@ -467,7 +469,7 @@ internal sealed class ResultWindow : ChromeWindow
 
     private void RestoreWindowProc()
     {
-        UnregisterDeleteHotkey();
+        UnregisterDeletionHotkeys();
         if (!_windowProcInstalled) return;
         Win32.SetWindowLongPtr(_hwnd, Win32.GwlWndProc, _previousWindowProc);
         _windowProcInstalled = false;
@@ -475,7 +477,9 @@ internal sealed class ResultWindow : ChromeWindow
 
     private IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
     {
-        if (message == Win32.WmHotkey && wParam.ToInt32() == DeleteHotkeyId && _selectedAnnotation is not null)
+        if (message == Win32.WmHotkey &&
+            wParam.ToInt32() is BackspaceHotkeyId or DeleteHotkeyId &&
+            _selectedAnnotation is not null)
         {
             DeleteSelectedAnnotation();
             return IntPtr.Zero;
@@ -483,21 +487,35 @@ internal sealed class ResultWindow : ChromeWindow
         return Win32.CallWindowProc(_previousWindowProc, hwnd, message, wParam, lParam);
     }
 
-    private void RegisterDeleteHotkey()
+    private void RegisterDeletionHotkeys()
     {
-        if (_deleteHotkeyRegistered || _hwnd == IntPtr.Zero) return;
-        _deleteHotkeyRegistered = Win32.RegisterHotKey(
-            _hwnd,
-            DeleteHotkeyId,
-            Win32.ModNoRepeat,
-            Win32.VkDelete);
+        if (_hwnd == IntPtr.Zero) return;
+        if (!_backspaceHotkeyRegistered)
+            _backspaceHotkeyRegistered = Win32.RegisterHotKey(
+                _hwnd,
+                BackspaceHotkeyId,
+                Win32.ModNoRepeat,
+                Win32.VkBack);
+        if (!_deleteHotkeyRegistered)
+            _deleteHotkeyRegistered = Win32.RegisterHotKey(
+                _hwnd,
+                DeleteHotkeyId,
+                Win32.ModNoRepeat,
+                Win32.VkDelete);
     }
 
-    private void UnregisterDeleteHotkey()
+    private void UnregisterDeletionHotkeys()
     {
-        if (!_deleteHotkeyRegistered) return;
-        Win32.UnregisterHotKey(_hwnd, DeleteHotkeyId);
-        _deleteHotkeyRegistered = false;
+        if (_backspaceHotkeyRegistered)
+        {
+            Win32.UnregisterHotKey(_hwnd, BackspaceHotkeyId);
+            _backspaceHotkeyRegistered = false;
+        }
+        if (_deleteHotkeyRegistered)
+        {
+            Win32.UnregisterHotKey(_hwnd, DeleteHotkeyId);
+            _deleteHotkeyRegistered = false;
+        }
     }
 
     private void SelectAnnotation(AnnotationVisual? annotation, bool showStyle = true)
