@@ -1,0 +1,13 @@
+.vs/
+.idea/
+.vscode/
+.agents/
+artifacts/
+**/bin/
+**/obj/
+*.user
+*.suo
+*.nupkg
+*.zip
+*.exe
+!src/Cachr/Assets/*.ico
