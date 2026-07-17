@@ -126,7 +126,6 @@ internal sealed class AnnotationStyleBar : UserControl
                 FontSize = UiTokens.Icon
             }
         };
-        ToolTipService.SetToolTip(_deleteButton, "Delete annotation");
         _deleteButton.PointerEntered += (_, _) => _deleteButton.Background = ThemePalette.Hover;
         _deleteButton.PointerExited += (_, _) => _deleteButton.Background = ThemePalette.Toolbar;
         _deleteButton.PointerPressed += (_, e) =>

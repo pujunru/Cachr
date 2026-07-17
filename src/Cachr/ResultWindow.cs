@@ -20,6 +20,7 @@ namespace Cachr;
 
 internal sealed class ResultWindow : ChromeWindow
 {
+    private const int DeleteHotkeyId = 0xCA41;
     private readonly byte[] _png;
     private readonly int _imageWidth;
     private readonly int _imageHeight;
@@ -43,6 +44,7 @@ internal sealed class ResultWindow : ChromeWindow
     private IntPtr _hwnd;
     private IntPtr _previousWindowProc;
     private bool _windowProcInstalled;
+    private bool _deleteHotkeyRegistered;
     private double _displayScale = 1;
     private double _zoom = 1;
     private double _offsetX;
@@ -115,15 +117,21 @@ internal sealed class ResultWindow : ChromeWindow
         _viewport.PointerReleased += PointerReleased;
         _viewport.KeyDown += KeyDown;
         _viewport.KeyUp += KeyUp;
+        Activated += (_, e) =>
+        {
+            if (e.WindowActivationState == WindowActivationState.Deactivated) UnregisterDeleteHotkey();
+            else RegisterDeleteHotkey();
+        };
         Closed += (_, _) => RestoreWindowProc();
         ApplyContentTheme();
     }
 
     public async Task ShowAsync()
     {
-        Activate();
         _hwnd = WindowNative.GetWindowHandle(this);
         InstallWindowProc();
+        Activate();
+        RegisterDeleteHotkey();
         _displayScale = Win32.GetDpiForWindow(_hwnd) / 96d;
         var imageDipWidth = _imageWidth / _displayScale;
         var imageDipHeight = _imageHeight / _displayScale;
@@ -459,6 +467,7 @@ internal sealed class ResultWindow : ChromeWindow
 
     private void RestoreWindowProc()
     {
+        UnregisterDeleteHotkey();
         if (!_windowProcInstalled) return;
         Win32.SetWindowLongPtr(_hwnd, Win32.GwlWndProc, _previousWindowProc);
         _windowProcInstalled = false;
@@ -466,12 +475,29 @@ internal sealed class ResultWindow : ChromeWindow
 
     private IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
     {
-        if (message == Win32.WmKeyDown && wParam.ToInt32() == Win32.VkDelete && _selectedAnnotation is not null)
+        if (message == Win32.WmHotkey && wParam.ToInt32() == DeleteHotkeyId && _selectedAnnotation is not null)
         {
             DeleteSelectedAnnotation();
             return IntPtr.Zero;
         }
         return Win32.CallWindowProc(_previousWindowProc, hwnd, message, wParam, lParam);
+    }
+
+    private void RegisterDeleteHotkey()
+    {
+        if (_deleteHotkeyRegistered || _hwnd == IntPtr.Zero) return;
+        _deleteHotkeyRegistered = Win32.RegisterHotKey(
+            _hwnd,
+            DeleteHotkeyId,
+            Win32.ModNoRepeat,
+            Win32.VkDelete);
+    }
+
+    private void UnregisterDeleteHotkey()
+    {
+        if (!_deleteHotkeyRegistered) return;
+        Win32.UnregisterHotKey(_hwnd, DeleteHotkeyId);
+        _deleteHotkeyRegistered = false;
     }
 
     private void SelectAnnotation(AnnotationVisual? annotation, bool showStyle = true)
@@ -497,7 +523,7 @@ internal sealed class ResultWindow : ChromeWindow
     {
         for (var index = _annotations.Count - 1; index >= 0; index--)
         {
-            var bounds = _annotations[index].Model.Bounds;
+            var bounds = _annotations[index].Model.OuterBounds;
             if (bounds.Contains((float)point.X, (float)point.Y)) return _annotations[index];
         }
         return null;
@@ -533,10 +559,17 @@ internal sealed class ResultWindow : ChromeWindow
     private void UpdateResize(Windows.Foundation.Point point)
     {
         if (!_resizingAnnotation || _selectedAnnotation is null) return;
+        var x = (float)point.X;
+        var y = (float)point.Y;
+        var stroke = _selectedAnnotation.Model.StrokeWidth;
+        if (_activeResizeHandle is ResizeHandle.TopLeft or ResizeHandle.Left or ResizeHandle.BottomLeft) x += stroke;
+        if (_activeResizeHandle is ResizeHandle.TopRight or ResizeHandle.Right or ResizeHandle.BottomRight) x -= stroke;
+        if (_activeResizeHandle is ResizeHandle.TopLeft or ResizeHandle.Top or ResizeHandle.TopRight) y += stroke;
+        if (_activeResizeHandle is ResizeHandle.BottomLeft or ResizeHandle.Bottom or ResizeHandle.BottomRight) y -= stroke;
         _selectedAnnotation.Model.Bounds = RectangleAnnotation.Resize(
             _resizeStartBounds,
             _activeResizeHandle,
-            new System.Drawing.PointF((float)point.X, (float)point.Y));
+            new System.Drawing.PointF(x, y));
         UpdateAnnotationVisual(_selectedAnnotation);
     }
 
@@ -622,7 +655,7 @@ internal sealed class ResultWindow : ChromeWindow
     private void UpdateAnnotationVisual(AnnotationVisual annotation)
     {
         var scale = ImageDipWidth / _imageWidth;
-        var bounds = annotation.Model.Bounds;
+        var bounds = annotation.Model.OuterBounds;
         annotation.Shape.Width = Math.Max(0, bounds.Width * scale);
         annotation.Shape.Height = Math.Max(0, bounds.Height * scale);
         annotation.Shape.StrokeThickness = Math.Max(.75, annotation.Model.StrokeWidth * scale);
@@ -645,7 +678,7 @@ internal sealed class ResultWindow : ChromeWindow
             return;
         }
         _selectionAdorner.Show(
-            _selectedAnnotation.Model.Bounds,
+            _selectedAnnotation.Model.OuterBounds,
             ImageDipWidth / _imageWidth,
             _selectedAnnotation.Model.Color);
     }
