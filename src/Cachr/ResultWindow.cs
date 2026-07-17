@@ -100,6 +100,7 @@ internal sealed class ResultWindow : ChromeWindow
             _selectedAnnotation.Model.StrokeWidth = width;
             UpdateAnnotationVisual(_selectedAnnotation);
         };
+        _annotationStyleBar.DeleteRequested += DeleteSelectedAnnotation;
         _annotationStyleBar.SizeChanged += (_, _) => PositionAnnotationStyleBar();
         Body.Children.Add(_viewport);
         _viewport.SizeChanged += ViewportSizeChanged;
@@ -113,7 +114,7 @@ internal sealed class ResultWindow : ChromeWindow
         deleteAccelerator.Invoked += (_, e) =>
         {
             if (_selectedAnnotation is null) return;
-            RemoveAnnotation(_selectedAnnotation);
+            DeleteSelectedAnnotation();
             e.Handled = true;
         };
         if (Content is UIElement root) root.KeyboardAccelerators.Add(deleteAccelerator);
@@ -442,6 +443,11 @@ internal sealed class ResultWindow : ChromeWindow
         _annotationLayer.Children.Remove(annotation.Shape);
         _annotations.Remove(annotation);
         SelectAnnotation(null);
+    }
+
+    private void DeleteSelectedAnnotation()
+    {
+        if (_selectedAnnotation is not null) RemoveAnnotation(_selectedAnnotation);
     }
 
     private void SelectAnnotation(AnnotationVisual? annotation, bool showStyle = true)

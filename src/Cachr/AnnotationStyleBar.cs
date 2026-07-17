@@ -26,6 +26,8 @@ internal sealed class AnnotationStyleBar : UserControl
     private readonly Border _colorButton;
     private readonly Border _root;
     private readonly Border _separator;
+    private readonly Border _deleteSeparator;
+    private readonly Border _deleteButton;
     private readonly Flyout _paletteFlyout;
     private readonly Grid _paletteGrid;
     private readonly StrokeWidthControl _widthControl;
@@ -34,12 +36,13 @@ internal sealed class AnnotationStyleBar : UserControl
 
     internal event Action<DrawingColor>? ColorChanged;
     internal event Action<float>? StrokeWidthChanged;
+    internal event Action? DeleteRequested;
     internal DrawingColor Color => _color;
     internal float StrokeWidth => _strokeWidth;
 
     internal AnnotationStyleBar()
     {
-        Width = 169;
+        Width = 202;
         Height = 42;
         _root = new Border
         {
@@ -51,7 +54,7 @@ internal sealed class AnnotationStyleBar : UserControl
         var row = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 7,
+            Spacing = 5,
             VerticalAlignment = VerticalAlignment.Center
         };
 
@@ -111,10 +114,34 @@ internal sealed class AnnotationStyleBar : UserControl
             StrokeWidthChanged?.Invoke(value);
         };
 
+        _deleteButton = new Border
+        {
+            Width = 26,
+            Height = 28,
+            CornerRadius = new CornerRadius(UiTokens.Radius),
+            Child = new FontIcon
+            {
+                Glyph = "\uE74D",
+                FontFamily = new FontFamily("Segoe Fluent Icons"),
+                FontSize = UiTokens.Icon
+            }
+        };
+        ToolTipService.SetToolTip(_deleteButton, "Delete annotation");
+        _deleteButton.PointerEntered += (_, _) => _deleteButton.Background = ThemePalette.Hover;
+        _deleteButton.PointerExited += (_, _) => _deleteButton.Background = ThemePalette.Toolbar;
+        _deleteButton.PointerPressed += (_, e) =>
+        {
+            e.Handled = true;
+            DeleteRequested?.Invoke();
+        };
+
         row.Children.Add(_colorButton);
         _separator = new Border { Width = 1, Height = 22 };
         row.Children.Add(_separator);
         row.Children.Add(_widthControl);
+        _deleteSeparator = new Border { Width = 1, Height = 22 };
+        row.Children.Add(_deleteSeparator);
+        row.Children.Add(_deleteButton);
         _root.Child = row;
         Content = _root;
         PointerPressed += (_, e) => e.Handled = true;
@@ -139,6 +166,9 @@ internal sealed class AnnotationStyleBar : UserControl
         foreach (var child in _paletteGrid.Children.OfType<Border>())
             child.BorderBrush = ThemePalette.Separator;
         _separator.Background = ThemePalette.Separator;
+        _deleteSeparator.Background = ThemePalette.Separator;
+        _deleteButton.Background = ThemePalette.Toolbar;
+        if (_deleteButton.Child is FontIcon icon) icon.Foreground = ThemePalette.Text;
         _widthControl.ApplyTheme();
     }
 
