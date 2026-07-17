@@ -1,4 +1,5 @@
 using System.Drawing.Imaging;
+using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
@@ -9,8 +10,11 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using WinRT.Interop;
 using DrawingBitmap = System.Drawing.Bitmap;
+using DrawingColor = System.Drawing.Color;
 using DrawingImage = System.Drawing.Image;
+using DrawingRectangleF = System.Drawing.RectangleF;
 using XamlImage = Microsoft.UI.Xaml.Controls.Image;
+using XamlRectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
 
 namespace Cachr;
 
@@ -20,7 +24,9 @@ internal sealed class ResultWindow : ChromeWindow
     private readonly int _imageWidth;
     private readonly int _imageHeight;
     private readonly XamlImage _preview = new() { Stretch = Stretch.Fill };
-    private readonly Border _image = new() { Child = null };
+    private readonly Grid _imageContent = new();
+    private readonly Canvas _annotationLayer = new() { IsHitTestVisible = false };
+    private readonly Border _image = new();
     private readonly WorkspaceCanvas _viewport = new() { Background = ThemePalette.Canvas };
     private readonly Canvas _dots = new() { IsHitTestVisible = false };
     private readonly TextBlock _dimensions = new() { FontSize = UiTokens.Text, VerticalAlignment = VerticalAlignment.Center };
@@ -28,7 +34,10 @@ internal sealed class ResultWindow : ChromeWindow
     private readonly Border _zoomControl = new() { CornerRadius = new CornerRadius(UiTokens.Radius), Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(10, 4, 10, 4) };
     private readonly TextBlock _zoomCardValue = new() { FontSize = UiTokens.Heading, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     private readonly Border _zoomCard = new() { Width = 172, CornerRadius = new CornerRadius(UiTokens.CardRadius), Padding = new Thickness(8), BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed };
+    private readonly AnnotationStyleBar _annotationStyleBar = new() { Visibility = Visibility.Collapsed };
     private readonly List<Border> _zoomCardButtons = [];
+    private readonly List<AnnotationVisual> _annotations = [];
+    private readonly Border _annotateButton;
     private double _displayScale = 1;
     private double _zoom = 1;
     private double _offsetX;
@@ -37,6 +46,10 @@ internal sealed class ResultWindow : ChromeWindow
     private bool _positioned;
     private bool _spaceHeld;
     private bool _panning;
+    private bool _annotateMode;
+    private bool _drawingAnnotation;
+    private Windows.Foundation.Point _annotationStart;
+    private AnnotationVisual? _selectedAnnotation;
     private Windows.Foundation.Point _lastPointer;
 
     public ResultWindow(DrawingBitmap image) : base("Cachr")
@@ -50,16 +63,36 @@ internal sealed class ResultWindow : ChromeWindow
 
         AddToolbarButton("\uE8C8", "Copy to clipboard", CopyAndClose);
         AddToolbarButton("\uE74E", "Save as PNG", () => _ = SaveAsync());
+        _annotateButton = AddToolbarButton("\uE70F", "Rectangle annotation", ToggleAnnotationMode);
+        _annotateButton.PointerExited += (_, _) => UpdateAnnotateButton();
         AddToolbarSeparator();
         AddToolbarButton("\uE713", "Settings", WindowManager.ShowSettings);
         AddToolbarButton("\uE711", "Close", Close);
         BuildToolbarStatus();
 
-        _image.Child = _preview;
+        _imageContent.Children.Add(_preview);
+        _imageContent.Children.Add(_annotationLayer);
+        _image.Child = _imageContent;
         _viewport.Children.Add(_dots);
         _viewport.Children.Add(_image);
         BuildZoomCard();
         _viewport.Children.Add(_zoomCard);
+        _viewport.Children.Add(_annotationStyleBar);
+        Canvas.SetZIndex(_zoomCard, 10);
+        Canvas.SetZIndex(_annotationStyleBar, 11);
+        _annotationStyleBar.ColorChanged += color =>
+        {
+            if (_selectedAnnotation is null) return;
+            _selectedAnnotation.Model.Color = color;
+            UpdateAnnotationVisual(_selectedAnnotation);
+        };
+        _annotationStyleBar.StrokeWidthChanged += width =>
+        {
+            if (_selectedAnnotation is null) return;
+            _selectedAnnotation.Model.StrokeWidth = width;
+            UpdateAnnotationVisual(_selectedAnnotation);
+        };
+        _annotationStyleBar.SizeChanged += (_, _) => PositionAnnotationStyleBar();
         Body.Children.Add(_viewport);
         _viewport.SizeChanged += ViewportSizeChanged;
         _viewport.PointerWheelChanged += PointerWheelChanged;
@@ -134,6 +167,7 @@ internal sealed class ResultWindow : ChromeWindow
         RebuildDots(e.NewSize);
         UpdateImageLayout();
         PositionZoomCard();
+        PositionAnnotationStyleBar();
     }
 
     private void PointerWheelChanged(object sender, PointerRoutedEventArgs e)
@@ -147,19 +181,37 @@ internal sealed class ResultWindow : ChromeWindow
     {
         if (_zoomCard.Visibility == Visibility.Visible) _zoomCard.Visibility = Visibility.Collapsed;
         _viewport.Focus(FocusState.Programmatic);
+        var current = e.GetCurrentPoint(_viewport);
         _spaceHeld = IsSpaceDown;
-        if (!_spaceHeld || !e.GetCurrentPoint(_viewport).Properties.IsLeftButtonPressed) return;
-        _panning = true;
-        _lastPointer = e.GetCurrentPoint(_viewport).Position;
+        if (_spaceHeld && current.Properties.IsLeftButtonPressed)
+        {
+            _panning = true;
+            _lastPointer = current.Position;
+            _viewport.CapturePointer(e.Pointer);
+            _viewport.SetPanCursor(true);
+            e.Handled = true;
+            return;
+        }
+
+        if (!_annotateMode || !current.Properties.IsLeftButtonPressed ||
+            !TryViewportToImage(current.Position, out var imagePoint)) return;
+
+        BeginAnnotation(imagePoint);
         _viewport.CapturePointer(e.Pointer);
-        _viewport.SetPanCursor(true);
         e.Handled = true;
     }
 
     private void PointerMoved(object sender, PointerRoutedEventArgs e)
     {
         _spaceHeld = IsSpaceDown;
-        if (!_panning) _viewport.SetCursorForSpace(_spaceHeld);
+        if (!_panning && !_drawingAnnotation)
+            _viewport.SetInteractionCursor(_spaceHeld, _annotateMode);
+        if (_drawingAnnotation)
+        {
+            UpdateDrawingAnnotation(ViewportToImageClamped(e.GetCurrentPoint(_viewport).Position));
+            e.Handled = true;
+            return;
+        }
         if (!_panning) return;
         var point = e.GetCurrentPoint(_viewport).Position;
         _offsetX += point.X - _lastPointer.X;
@@ -171,11 +223,22 @@ internal sealed class ResultWindow : ChromeWindow
 
     private void PointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        if (!_panning) return;
-        _panning = false;
-        _viewport.ReleasePointerCapture(e.Pointer);
-        _viewport.SetPanCursor(false);
-        e.Handled = true;
+        if (_drawingAnnotation)
+        {
+            UpdateDrawingAnnotation(ViewportToImageClamped(e.GetCurrentPoint(_viewport).Position));
+            FinishAnnotation();
+            _viewport.ReleasePointerCapture(e.Pointer);
+            _viewport.SetInteractionCursor(IsSpaceDown, _annotateMode);
+            e.Handled = true;
+            return;
+        }
+        if (_panning)
+        {
+            _panning = false;
+            _viewport.ReleasePointerCapture(e.Pointer);
+            _viewport.SetInteractionCursor(IsSpaceDown, _annotateMode);
+            e.Handled = true;
+        }
     }
 
     private void KeyDown(object sender, KeyRoutedEventArgs e)
@@ -187,7 +250,11 @@ internal sealed class ResultWindow : ChromeWindow
             e.Handled = true;
             return;
         }
-
+        if (e.Key == Windows.System.VirtualKey.Escape && _drawingAnnotation)
+        {
+            CancelDrawingAnnotation();
+            e.Handled = true;
+        }
     }
 
     private void KeyUp(object sender, KeyRoutedEventArgs e)
@@ -195,8 +262,126 @@ internal sealed class ResultWindow : ChromeWindow
         if (e.Key != Windows.System.VirtualKey.Space) return;
         _spaceHeld = false;
         _panning = false;
-        _viewport.SetDefaultCursor();
+        _viewport.SetInteractionCursor(false, _annotateMode);
         e.Handled = true;
+    }
+
+    private void ToggleAnnotationMode()
+    {
+        _annotateMode = !_annotateMode;
+        _zoomCard.Visibility = Visibility.Collapsed;
+        _viewport.SetInteractionCursor(IsSpaceDown, _annotateMode);
+        UpdateAnnotateButton();
+    }
+
+    private void UpdateAnnotateButton()
+    {
+        _annotateButton.Background = _annotateMode ? ThemePalette.Accent : ThemePalette.Toolbar;
+        if (_annotateButton.Child is FontIcon icon)
+            icon.Foreground = _annotateMode
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255))
+                : ThemePalette.Text;
+    }
+
+    private void BeginAnnotation(Windows.Foundation.Point point)
+    {
+        _annotationStart = point;
+        _drawingAnnotation = true;
+        var model = new RectangleAnnotation
+        {
+            Bounds = new DrawingRectangleF((float)point.X, (float)point.Y, 0, 0),
+            Color = _annotationStyleBar.Color,
+            StrokeWidth = _annotationStyleBar.StrokeWidth
+        };
+        var visual = new AnnotationVisual(model, new XamlRectangle { Fill = null });
+        _annotations.Add(visual);
+        _annotationLayer.Children.Add(visual.Shape);
+        _selectedAnnotation = visual;
+        UpdateAnnotationVisual(visual);
+    }
+
+    private void UpdateDrawingAnnotation(Windows.Foundation.Point point)
+    {
+        if (_selectedAnnotation is null) return;
+        var left = Math.Min(_annotationStart.X, point.X);
+        var top = Math.Min(_annotationStart.Y, point.Y);
+        _selectedAnnotation.Model.Bounds = new DrawingRectangleF(
+            (float)left,
+            (float)top,
+            (float)Math.Abs(point.X - _annotationStart.X),
+            (float)Math.Abs(point.Y - _annotationStart.Y));
+        UpdateAnnotationVisual(_selectedAnnotation);
+    }
+
+    private void FinishAnnotation()
+    {
+        _drawingAnnotation = false;
+        if (_selectedAnnotation is null) return;
+        var bounds = _selectedAnnotation.Model.Bounds;
+        if (bounds.Width < 3 || bounds.Height < 3)
+        {
+            RemoveAnnotation(_selectedAnnotation);
+            return;
+        }
+
+        _annotationStyleBar.SetStyle(
+            _selectedAnnotation.Model.Color,
+            _selectedAnnotation.Model.StrokeWidth);
+        _annotationStyleBar.Visibility = Visibility.Visible;
+        PositionAnnotationStyleBar();
+        PositionZoomCard();
+    }
+
+    private void CancelDrawingAnnotation()
+    {
+        if (_selectedAnnotation is not null) RemoveAnnotation(_selectedAnnotation);
+        _drawingAnnotation = false;
+        _viewport.ReleasePointerCaptures();
+        _viewport.SetInteractionCursor(IsSpaceDown, _annotateMode);
+    }
+
+    private void RemoveAnnotation(AnnotationVisual annotation)
+    {
+        _annotationLayer.Children.Remove(annotation.Shape);
+        _annotations.Remove(annotation);
+        _selectedAnnotation = _annotations.LastOrDefault();
+        if (_selectedAnnotation is null)
+        {
+            _annotationStyleBar.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            _annotationStyleBar.SetStyle(
+                _selectedAnnotation.Model.Color,
+                _selectedAnnotation.Model.StrokeWidth);
+        }
+        PositionZoomCard();
+    }
+
+    private bool TryViewportToImage(Windows.Foundation.Point point, out Windows.Foundation.Point imagePoint)
+    {
+        var width = ImageDipWidth;
+        var height = ImageDipHeight;
+        if (width <= 0 || height <= 0 || point.X < _offsetX || point.Y < _offsetY ||
+            point.X > _offsetX + width || point.Y > _offsetY + height)
+        {
+            imagePoint = default;
+            return false;
+        }
+
+        imagePoint = new Windows.Foundation.Point(
+            (point.X - _offsetX) / width * _imageWidth,
+            (point.Y - _offsetY) / height * _imageHeight);
+        return true;
+    }
+
+    private Windows.Foundation.Point ViewportToImageClamped(Windows.Foundation.Point point)
+    {
+        var width = Math.Max(1, ImageDipWidth);
+        var height = Math.Max(1, ImageDipHeight);
+        return new Windows.Foundation.Point(
+            Math.Clamp((point.X - _offsetX) / width * _imageWidth, 0, _imageWidth),
+            Math.Clamp((point.Y - _offsetY) / height * _imageHeight, 0, _imageHeight));
     }
 
     private void ResetZoom()
@@ -241,8 +426,27 @@ internal sealed class ResultWindow : ChromeWindow
     {
         _image.Width = Math.Max(1, ImageDipWidth);
         _image.Height = Math.Max(1, ImageDipHeight);
+        _annotationLayer.Width = _image.Width;
+        _annotationLayer.Height = _image.Height;
         Canvas.SetLeft(_image, _offsetX);
         Canvas.SetTop(_image, _offsetY);
+        foreach (var annotation in _annotations) UpdateAnnotationVisual(annotation);
+    }
+
+    private void UpdateAnnotationVisual(AnnotationVisual annotation)
+    {
+        var scale = ImageDipWidth / _imageWidth;
+        var bounds = annotation.Model.Bounds;
+        annotation.Shape.Width = Math.Max(0, bounds.Width * scale);
+        annotation.Shape.Height = Math.Max(0, bounds.Height * scale);
+        annotation.Shape.StrokeThickness = Math.Max(.75, annotation.Model.StrokeWidth * scale);
+        annotation.Shape.Stroke = new SolidColorBrush(Windows.UI.Color.FromArgb(
+            annotation.Model.Color.A,
+            annotation.Model.Color.R,
+            annotation.Model.Color.G,
+            annotation.Model.Color.B));
+        Canvas.SetLeft(annotation.Shape, bounds.X * scale);
+        Canvas.SetTop(annotation.Shape, bounds.Y * scale);
     }
 
     private void UpdateZoomText()
@@ -320,7 +524,13 @@ internal sealed class ResultWindow : ChromeWindow
     private void PositionZoomCard()
     {
         Canvas.SetLeft(_zoomCard, Math.Max(12, _viewport.ActualWidth - _zoomCard.Width - 12));
-        Canvas.SetTop(_zoomCard, 12);
+        Canvas.SetTop(_zoomCard, _annotationStyleBar.Visibility == Visibility.Visible ? 62 : 12);
+    }
+
+    private void PositionAnnotationStyleBar()
+    {
+        Canvas.SetLeft(_annotationStyleBar, Math.Max(12, _viewport.ActualWidth - _annotationStyleBar.Width - 12));
+        Canvas.SetTop(_annotationStyleBar, 12);
     }
 
     private void RebuildDots(Windows.Foundation.Size size)
@@ -352,6 +562,8 @@ internal sealed class ResultWindow : ChromeWindow
         _zoomCardValue.Foreground = ThemePalette.Text;
         foreach (var button in _zoomCardButtons) button.Background = ThemePalette.Toolbar;
         ApplyTextColor(_zoomCard.Child);
+        _annotationStyleBar.ApplyTheme();
+        UpdateAnnotateButton();
         if (_lastViewportSize.Width > 0) RebuildDots(_lastViewportSize);
     }
 
@@ -370,15 +582,26 @@ internal sealed class ResultWindow : ChromeWindow
 
     private void CopyAndClose()
     {
-        using var image = Decode();
+        using var image = RenderOutput();
         ClipboardWriter.Copy(image);
         Close();
     }
 
     private async Task SaveAsync()
     {
-        using var image = Decode();
+        using var image = RenderOutput();
         await FileSaver.SaveAsync(image, this);
+    }
+
+    private DrawingBitmap RenderOutput()
+    {
+        var image = Decode();
+        if (_annotations.Count == 0) return image;
+        using var graphics = System.Drawing.Graphics.FromImage(image);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        foreach (var annotation in _annotations) annotation.Model.Render(graphics);
+        return image;
     }
 
     private DrawingBitmap Decode()
@@ -388,11 +611,13 @@ internal sealed class ResultWindow : ChromeWindow
         return new DrawingBitmap(loaded);
     }
 
+    private sealed record AnnotationVisual(RectangleAnnotation Model, XamlRectangle Shape);
+
     private sealed class WorkspaceCanvas : Canvas
     {
         public WorkspaceCanvas() => ProtectedCursor = InputSystemCursor.Create(InputSystemCursorShape.Arrow);
         public void SetPanCursor(bool dragging) => ProtectedCursor = InputSystemCursor.Create(dragging ? InputSystemCursorShape.SizeAll : InputSystemCursorShape.Hand);
-        public void SetCursorForSpace(bool spaceHeld) => ProtectedCursor = InputSystemCursor.Create(spaceHeld ? InputSystemCursorShape.Hand : InputSystemCursorShape.Arrow);
-        public void SetDefaultCursor() => ProtectedCursor = InputSystemCursor.Create(InputSystemCursorShape.Arrow);
+        public void SetInteractionCursor(bool spaceHeld, bool annotateMode) => ProtectedCursor = InputSystemCursor.Create(
+            spaceHeld ? InputSystemCursorShape.Hand : annotateMode ? InputSystemCursorShape.Cross : InputSystemCursorShape.Arrow);
     }
 }
