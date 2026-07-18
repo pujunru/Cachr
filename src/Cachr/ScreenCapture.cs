@@ -4,6 +4,19 @@ namespace Cachr;
 
 internal static class ScreenCapture
 {
+    internal static Rectangle ForegroundWindowBounds()
+    {
+        const int extendedFrameBounds = 9;
+        var window = Win32.GetForegroundWindow();
+        if (window == IntPtr.Zero) throw new InvalidOperationException("Could not identify the active window.");
+        if (Win32.DwmGetWindowAttribute(window, extendedFrameBounds, out var rect, System.Runtime.InteropServices.Marshal.SizeOf<Win32.Rect>()) != 0 &&
+            !Win32.GetWindowRect(window, out rect))
+            throw new InvalidOperationException("Could not read the active window bounds.");
+        var bounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        if (bounds.Width <= 0 || bounds.Height <= 0) throw new InvalidOperationException("The active window has no visible area.");
+        return bounds;
+    }
+
     internal static Rectangle CurrentMonitorBounds()
     {
         const uint nearestMonitor = 2;
